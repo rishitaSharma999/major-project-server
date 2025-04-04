@@ -3,14 +3,14 @@ import os
 import uuid
 import json
 import numpy as np
-import gdown  # used to download files from Google Drive
+import gdown
 from werkzeug.utils import secure_filename
 from tensorflow.keras.preprocessing import image
 from tensorflow.keras.models import load_model
 from flask_cors import CORS, cross_origin
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS globally if desired
+CORS(app)
 
 # Configure upload folder
 UPLOAD_FOLDER = 'uploads'
@@ -27,24 +27,54 @@ os.makedirs(MODELS_DIR, exist_ok=True)
 MODEL_PATH = os.path.join(MODELS_DIR, 'final_model.keras')
 CLASS_INDICES_PATH = os.path.join(MODELS_DIR, 'class_indices.json')
 
-MODEL_DRIVE_URL = os.environ.get("MODEL_DRIVE_URL", "https://drive.google.com/file/d/1GoneNJyyl-Hy1O_QWl4-viZ_fKHoKfws/view?usp=sharing")
-CLASS_INDICES_DRIVE_URL = os.environ.get("CLASS_INDICES_DRIVE_URL", "https://drive.google.com/uc?id=1X48AVSq7dHfj5xzMNa7LGvncYRqxN8f2")
+# Use direct download URLs with file IDs instead of shareable links
+MODEL_FILE_ID = os.environ.get("MODEL_FILE_ID", "1GoneNJyyl-Hy1O_QWl4-viZ_fKHoKfws")
+CLASS_INDICES_FILE_ID = os.environ.get("CLASS_INDICES_FILE_ID", "1X48AVSq7dHfj5xzMNa7LGvncYRqxN8f2")
 
-# Download model and class indices if not present locally
-if not os.path.exists(MODEL_PATH):
-    print(f"Downloading model from {MODEL_DRIVE_URL} ...")
-    gdown.download(MODEL_DRIVE_URL, MODEL_PATH, quiet=False, fuzzy=True,use_cookies=True)
-else:
-    print("Model already exists locally.")
+# Function to download model with proper error handling
+def download_model():
+    if not os.path.exists(MODEL_PATH):
+        try:
+            print(f"Downloading model with file ID: {MODEL_FILE_ID}...")
+            url = f'https://drive.google.com/uc?id={MODEL_FILE_ID}'
+            gdown.download(url, MODEL_PATH, quiet=False)
+            print(f"Model downloaded successfully to {MODEL_PATH}")
+            return True
+        except Exception as e:
+            print(f"Error downloading model: {str(e)}")
+            # If model fails to download, create a placeholder file to indicate failure
+            with open(f"{MODEL_PATH}.failed", "w") as f:
+                f.write(f"Download failed: {str(e)}")
+            return False
+    else:
+        print("Model already exists locally.")
+        return True
 
-if not os.path.exists(CLASS_INDICES_PATH):
-    print(f"Downloading class indices from {CLASS_INDICES_DRIVE_URL} ...")
-    gdown.download(CLASS_INDICES_DRIVE_URL, CLASS_INDICES_PATH, quiet=False, fuzzy=True)
-else:
-    print("Class indices already exist locally.")
+# Function to download class indices with proper error handling  
+def download_class_indices():
+    if not os.path.exists(CLASS_INDICES_PATH):
+        try:
+            print(f"Downloading class indices with file ID: {CLASS_INDICES_FILE_ID}...")
+            url = f'https://drive.google.com/uc?id={CLASS_INDICES_FILE_ID}'
+            gdown.download(url, CLASS_INDICES_PATH, quiet=False)
+            print(f"Class indices downloaded successfully to {CLASS_INDICES_PATH}")
+            return True
+        except Exception as e:
+            print(f"Error downloading class indices: {str(e)}")
+            # If class indices fail to download, create a placeholder file to indicate failure
+            with open(f"{CLASS_INDICES_PATH}.failed", "w") as f:
+                f.write(f"Download failed: {str(e)}")
+            return False
+    else:
+        print("Class indices already exist locally.")
+        return True
 
-# Define image size for preprocessing (required for predict_species function)
-IMAGE_SIZE = (224, 224)  # Adjust this based on your model requirements
+# Try downloading files on startup
+model_download_success = download_model()
+class_indices_download_success = download_class_indices()
+
+# Define image size for preprocessing
+IMAGE_SIZE = (224, 224)
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -65,6 +95,13 @@ def predict_species(image_path, model_path=None, class_indices_path=None):
         model_path = MODEL_PATH
     if class_indices_path is None:
         class_indices_path = CLASS_INDICES_PATH
+    
+    # Check if model and class indices are available
+    if not os.path.exists(model_path):
+        return {"error": "Model file not available. Please check server logs."}
+    
+    if not os.path.exists(class_indices_path):
+        return {"error": "Class indices file not available. Please check server logs."}
     
     # Load the model
     try:
@@ -121,11 +158,55 @@ def predict_species(image_path, model_path=None, class_indices_path=None):
 
 @app.route('/')
 def home():
-    return render_template('index.html')
+    # Add status check for model and class indices
+    model_status = "Available" if os.path.exists(MODEL_PATH) else "Not Available"
+    class_indices_status = "Available" if os.path.exists(CLASS_INDICES_PATH) else "Not Available"
+    
+    return render_template('index.html', 
+                          model_status=model_status,
+                          class_indices_status=class_indices_status)
+
+@app.route('/status')
+def status():
+    """Endpoint to check the status of model and class indices files"""
+    model_available = os.path.exists(MODEL_PATH)
+    class_indices_available = os.path.exists(CLASS_INDICES_PATH)
+    
+    # Check for failed downloads
+    model_failed = os.path.exists(f"{MODEL_PATH}.failed")
+    class_indices_failed = os.path.exists(f"{CLASS_INDICES_PATH}.failed")
+    
+    # Read error messages if available
+    model_error = None
+    class_indices_error = None
+    
+    if model_failed:
+        with open(f"{MODEL_PATH}.failed", "r") as f:
+            model_error = f.read()
+            
+    if class_indices_failed:
+        with open(f"{CLASS_INDICES_PATH}.failed", "r") as f:
+            class_indices_error = f.read()
+    
+    return jsonify({
+        "model_available": model_available,
+        "class_indices_available": class_indices_available,
+        "model_failed": model_failed,
+        "class_indices_failed": class_indices_failed,
+        "model_error": model_error,
+        "class_indices_error": class_indices_error
+    })
 
 @app.route('/predict', methods=['GET', 'POST'])
-@cross_origin()  # Enable CORS explicitly for this endpoint
+@cross_origin()
 def predict():
+    # Check if model and class indices are available
+    if not os.path.exists(MODEL_PATH):
+        return jsonify({"error": "Model not available. Please check server status at /status endpoint."})
+    
+    if not os.path.exists(CLASS_INDICES_PATH):
+        return jsonify({"error": "Class indices not available. Please check server status at /status endpoint."})
+    
     # Allow GET for testing /predict separately
     if request.method == 'GET':
         return jsonify({"message": "Predict endpoint is accessible."})
@@ -155,8 +236,22 @@ def predict():
     
     return jsonify({'error': 'Invalid file type'})
 
+@app.route('/trigger-download', methods=['POST'])
+def trigger_download():
+    """Endpoint to manually trigger model and class indices download"""
+    try:
+        model_result = download_model()
+        class_indices_result = download_class_indices()
+        
+        return jsonify({
+            "model_download_success": model_result,
+            "class_indices_download_success": class_indices_result
+        })
+    except Exception as e:
+        return jsonify({
+            "error": str(e)
+        })
+
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))  # Use PORT from env; default to 10000
+    port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-
-
