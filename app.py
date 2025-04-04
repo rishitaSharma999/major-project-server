@@ -27,13 +27,13 @@ os.makedirs(MODELS_DIR, exist_ok=True)
 MODEL_PATH = os.path.join(MODELS_DIR, 'final_model.keras')
 CLASS_INDICES_PATH = os.path.join(MODELS_DIR, 'class_indices.json')
 
-MODEL_DRIVE_URL = os.environ.get("MODEL_DRIVE_URL", "https://drive.google.com/uc?id=1GoneNJyyl-Hy1O_QWl4-viZ_fKHoKfws")
+MODEL_DRIVE_URL = os.environ.get("MODEL_DRIVE_URL", "https://drive.google.com/file/d/1GoneNJyyl-Hy1O_QWl4-viZ_fKHoKfws/view?usp=sharing")
 CLASS_INDICES_DRIVE_URL = os.environ.get("CLASS_INDICES_DRIVE_URL", "https://drive.google.com/uc?id=1X48AVSq7dHfj5xzMNa7LGvncYRqxN8f2")
 
 # Download model and class indices if not present locally
 if not os.path.exists(MODEL_PATH):
     print(f"Downloading model from {MODEL_DRIVE_URL} ...")
-    gdown.download(id="1GoneNJyyl-Hy1O_QWl4-viZ_fKHoKfws", output=MODEL_PATH, quiet=False, fuzzy=True)
+    gdown.download(MODEL_DRIVE_URL, MODEL_PATH, quiet=False, fuzzy=True,use_cookies=True)
 else:
     print("Model already exists locally.")
 
