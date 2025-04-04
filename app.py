@@ -33,7 +33,7 @@ CLASS_INDICES_DRIVE_URL = os.environ.get("CLASS_INDICES_DRIVE_URL", "https://dri
 # Download model and class indices if not present locally
 if not os.path.exists(MODEL_PATH):
     print(f"Downloading model from {MODEL_DRIVE_URL} ...")
-    gdown.download(MODEL_DRIVE_URL, MODEL_PATH, quiet=False, fuzzy=True)
+    gdown.download(id="1GoneNJyyl-Hy1O_QWl4-viZ_fKHoKfws", output=MODEL_PATH, quiet=False, fuzzy=True)
 else:
     print("Model already exists locally.")
 
@@ -156,5 +156,7 @@ def predict():
     return jsonify({'error': 'Invalid file type'})
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)  # Change port as needed
+    port = int(os.environ.get("PORT", 10000))  # Use PORT from env; default to 10000
+    app.run(host="0.0.0.0", port=port)
+
 
