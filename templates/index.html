@@ -62,6 +62,14 @@
             height: 100%;
             background-color: #4CAF50;
         }
+        .error-message {
+            color: #f44336;
+            background-color: #ffebee;
+            padding: 10px;
+            border-radius: 5px;
+            margin-top: 10px;
+            display: none;
+        }
     </style>
 </head>
 <body>
@@ -81,6 +89,8 @@
     <div id="loading" style="display: none; text-align: center;">
         <p>Processing image...</p>
     </div>
+    
+    <div id="error-container" class="error-message"></div>
     
     <div id="results" class="results">
         <div class="results-container">
@@ -111,6 +121,11 @@
                 return;
             }
             
+            // Clear previous errors
+            const errorContainer = document.getElementById('error-container');
+            errorContainer.style.display = 'none';
+            errorContainer.textContent = '';
+            
             // Display loading indicator
             document.getElementById('loading').style.display = 'block';
             document.getElementById('results').style.display = 'none';
@@ -132,13 +147,28 @@
                 method: 'POST',
                 body: formData
             })
-            .then(response => response.json())
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`Server responded with status: ${response.status}`);
+                }
+                return response.text().then(text => {
+                    try {
+                        // First try to parse as JSON
+                        return JSON.parse(text);
+                    } catch (err) {
+                        // If parsing fails, throw error with the original text
+                        console.error("Failed to parse response as JSON:", text);
+                        throw new Error(`Invalid JSON response from server: ${text.substring(0, 100)}...`);
+                    }
+                });
+            })
             .then(data => {
                 // Hide loading indicator
                 document.getElementById('loading').style.display = 'none';
                 
                 if (data.error) {
-                    alert('Error: ' + data.error);
+                    errorContainer.textContent = 'Error: ' + data.error;
+                    errorContainer.style.display = 'block';
                     return;
                 }
                 
@@ -178,7 +208,9 @@
             })
             .catch(error => {
                 document.getElementById('loading').style.display = 'none';
-                alert('Error processing request: ' + error);
+                errorContainer.textContent = 'Error processing request: ' + error.message;
+                errorContainer.style.display = 'block';
+                console.error('Error details:', error);
             });
         });
     </script>

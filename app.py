@@ -8,6 +8,7 @@ import json
 import numpy as np
 import shutil
 import kagglehub
+import traceback
 from werkzeug.utils import secure_filename
 from tensorflow.keras.preprocessing import image
 from tensorflow.keras.models import load_model
@@ -139,69 +140,79 @@ def predict_species(image_path, model_path=None, class_indices_path=None):
     Returns:
         dict: Prediction results including species and confidence.
     """
-    if model_path is None:
-        model_path = MODEL_PATH
-    if class_indices_path is None:
-        class_indices_path = CLASS_INDICES_PATH
-
-    # Check if model and class indices are available
-    if not os.path.exists(model_path):
-        return {"error": "Model file not available. Please check server logs."}
-    if not os.path.exists(class_indices_path):
-        return {"error": "Class indices file not available. Please check server logs."}
-
-    # Load the model
     try:
-        model = load_model(model_path)
-        print(f"Model loaded successfully from {model_path}")
+        if model_path is None:
+            model_path = MODEL_PATH
+        if class_indices_path is None:
+            class_indices_path = CLASS_INDICES_PATH
+
+        # Check if model and class indices are available
+        if not os.path.exists(model_path):
+            return {"error": "Model file not available. Please check server logs."}
+        if not os.path.exists(class_indices_path):
+            return {"error": "Class indices file not available. Please check server logs."}
+
+        # Load the model
+        try:
+            model = load_model(model_path)
+            print(f"Model loaded successfully from {model_path}")
+        except Exception as e:
+            error_msg = f"Error loading model: {e}"
+            print(error_msg)
+            return {"error": error_msg}
+
+        # Load class indices
+        try:
+            with open(class_indices_path, 'r') as f:
+                class_indices_str = json.load(f)
+                class_indices = {k: v for k, v in class_indices_str.items()}
+        except Exception as e:
+            error_msg = f"Error loading class indices: {e}"
+            print(error_msg)
+            return {"error": error_msg}
+
+        # Load and preprocess image
+        try:
+            img = image.load_img(image_path, target_size=IMAGE_SIZE)
+            img_array = image.img_to_array(img)
+            img_array = np.expand_dims(img_array, axis=0)
+            img_array = img_array / 255.0
+        except Exception as e:
+            error_msg = f"Error processing image: {e}"
+            print(error_msg)
+            return {"error": error_msg}
+
+        # Predict
+        try:
+            prediction = model.predict(img_array)
+            predicted_idx = np.argmax(prediction[0])
+            confidence = float(prediction[0][predicted_idx])
+
+            # Convert index to class name
+            class_names = {int(v): k for k, v in class_indices.items()}
+            species = class_names[predicted_idx]
+
+            result = {
+                'species': species,
+                'confidence': confidence,
+                'top_predictions': [
+                    {
+                        'species': class_names[int(i)],
+                        'confidence': float(prediction[0][i])
+                    }
+                    for i in np.argsort(-prediction[0])[:5]  # Top 5 predictions
+                ]
+            }
+            return result
+        except Exception as e:
+            error_msg = f"Error during prediction: {e}"
+            print(error_msg)
+            return {"error": error_msg}
     except Exception as e:
-        print(f"Error loading model: {e}")
-        return {"error": f"Could not load model: {str(e)}"}
-
-    # Load class indices
-    try:
-        with open(class_indices_path, 'r') as f:
-            class_indices_str = json.load(f)
-            class_indices = {k: v for k, v in class_indices_str.items()}
-    except Exception as e:
-        print(f"Error loading class indices: {e}")
-        return {"error": f"Could not load class indices: {str(e)}"}
-
-    # Load and preprocess image
-    try:
-        img = image.load_img(image_path, target_size=IMAGE_SIZE)
-        img_array = image.img_to_array(img)
-        img_array = np.expand_dims(img_array, axis=0)
-        img_array = img_array / 255.0
-    except Exception as e:
-        print(f"Error processing image: {e}")
-        return {"error": f"Could not process image: {str(e)}"}
-
-    # Predict
-    try:
-        prediction = model.predict(img_array)
-        predicted_idx = np.argmax(prediction[0])
-        confidence = float(prediction[0][predicted_idx])
-
-        # Convert index to class name
-        class_names = {int(v): k for k, v in class_indices.items()}
-        species = class_names[predicted_idx]
-
-        result = {
-            'species': species,
-            'confidence': confidence,
-            'top_predictions': [
-                {
-                    'species': class_names[int(i)],
-                    'confidence': float(prediction[0][i])
-                }
-                for i in np.argsort(-prediction[0])[:5]  # Top 5 predictions
-            ]
-        }
-        return result
-    except Exception as e:
-        print(f"Error during prediction: {e}")
-        return {"error": f"Prediction failed: {str(e)}"}
+        error_msg = f"Unexpected error in predict_species: {e}"
+        print(error_msg)
+        traceback.print_exc()
+        return {"error": error_msg}
 
 @app.route('/')
 def home():
@@ -246,40 +257,49 @@ def status():
 @app.route('/predict', methods=['GET', 'POST'])
 @cross_origin()
 def predict():
-    # Check if model and class indices are available
-    if not os.path.exists(MODEL_PATH):
-        return jsonify({"error": "Model not available. Please check server status at /status endpoint."})
-    if not os.path.exists(CLASS_INDICES_PATH):
-        return jsonify({"error": "Class indices not available. Please check server status at /status endpoint."})
-    
-    # Allow GET for testing /predict separately
-    if request.method == 'GET':
-        return jsonify({"message": "Predict endpoint is accessible."})
-    
-    # POST method for file upload and prediction
-    if 'file' not in request.files:
-        return jsonify({'error': 'No file part'})
-    
-    file = request.files['file']
-    
-    if file.filename == '':
-        return jsonify({'error': 'No selected file'})
-    
-    if file and allowed_file(file.filename):
-        filename = secure_filename(file.filename)
-        unique_filename = f"{uuid.uuid4()}_{filename}"
-        file_path = os.path.join(app.config['UPLOAD_FOLDER'], unique_filename)
-        file.save(file_path)
+    try:
+        # Check if model and class indices are available
+        if not os.path.exists(MODEL_PATH):
+            return jsonify({"error": "Model not available. Please check server status at /status endpoint."})
+        if not os.path.exists(CLASS_INDICES_PATH):
+            return jsonify({"error": "Class indices not available. Please check server status at /status endpoint."})
         
-        prediction_result = predict_species(
-            image_path=file_path,
-            model_path=MODEL_PATH,
-            class_indices_path=CLASS_INDICES_PATH
-        )
+        # Allow GET for testing /predict separately
+        if request.method == 'GET':
+            return jsonify({"message": "Predict endpoint is accessible."})
         
-        return jsonify(prediction_result)
-    
-    return jsonify({'error': 'Invalid file type'})
+        # POST method for file upload and prediction
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file part'})
+        
+        file = request.files['file']
+        
+        if file.filename == '':
+            return jsonify({'error': 'No selected file'})
+        
+        if file and allowed_file(file.filename):
+            filename = secure_filename(file.filename)
+            unique_filename = f"{uuid.uuid4()}_{filename}"
+            file_path = os.path.join(app.config['UPLOAD_FOLDER'], unique_filename)
+            file.save(file_path)
+            
+            # Predict species
+            prediction_result = predict_species(
+                image_path=file_path,
+                model_path=MODEL_PATH,
+                class_indices_path=CLASS_INDICES_PATH
+            )
+            
+            # Ensure prediction_result is a valid dictionary
+            if not isinstance(prediction_result, dict):
+                prediction_result = {"error": "Invalid prediction result format"}
+            
+            return jsonify(prediction_result)
+        
+        return jsonify({'error': 'Invalid file type'})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': f"Server error: {str(e)}"})
 
 @app.route('/trigger-download', methods=['POST'])
 def trigger_download():
@@ -293,9 +313,10 @@ def trigger_download():
             "class_indices_download_success": class_indices_result
         })
     except Exception as e:
+        traceback.print_exc()
         return jsonify({
             "error": str(e)
         })
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=PORT)
+    app.run(host="0.0.0.0", port=PORT, debug=True)
